@@ -1,0 +1,10 @@
+# surcharge pour la montee de version : PG16 sur un NOUVEAU volume, l'ancien pgdata n'est pas touche
+# docker compose -f compose.yml -f compose.pg16.yml up -d --wait
+services:
+  db:
+    image: postgres:16.4-alpine
+    volumes:
+      - pgdata16:/var/lib/postgresql/data
+
+volumes:
+  pgdata16:
