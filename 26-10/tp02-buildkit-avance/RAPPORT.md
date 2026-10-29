@@ -62,7 +62,8 @@ Alternatives :
   (`docker build --ssh default .`), la clé privée ne rentre jamais dans le build.
 - `--secret id=TOKEN,env=TOKEN` côté CLI (lit la variable d'env de la CI au lieu d'un fichier) et
   `RUN --mount=type=secret,id=TOKEN,env=PIP_INDEX_URL` côté Dockerfile (dockerfile >= 1.10) pour l'exposer en variable
-  d'env juste le temps du RUN. C'est ce que fait `Dockerfile.uv`.
+  d'env juste le temps du RUN. Dans `Dockerfile.uv` j'ai gardé un secret en fichier lu avec
+  `UV_INDEX_URL="$(cat /run/secrets/uv_index)"` : même résultat, et hadolint 2.12 ne connaît pas encore `env=`.
 
 ## 3. Cache mount
 
@@ -172,6 +173,16 @@ dans le cache, donc pas de réutilisation sur un autre runner.
 hit pour un multi-stage.
 
 Les cache mounts ne sont **pas** exportés par `--cache-to`, ils restent locaux au builder.
+
+Remarque hadolint : la règle DL3042 demande `pip install --no-cache-dir` (pour ne pas laisser le cache pip dans
+l'image). Avec un cache mount c'est l'inverse de ce qu'on veut, et le cache n'est de toute façon pas dans la couche.
+La règle est donc désactivée sur ces deux `RUN` (`# hadolint ignore=DL3042`), le reste passe sans warning :
+
+```
+$ hadolint Dockerfile
+$ echo $?
+0
+```
 
 ## 6. bake
 

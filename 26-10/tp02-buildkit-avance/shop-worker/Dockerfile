@@ -13,12 +13,15 @@ ARG TARGETARCH
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
+# le cache pip est dans un cache mount, il ne finit pas dans l image
+# hadolint ignore=DL3042
 RUN --mount=type=secret,id=pipconf,target=/etc/pip.conf \
     --mount=type=cache,target=/root/.cache/pip,id=pip-${TARGETARCH} \
     pip install -r requirements.txt
 
 FROM builder AS test
 COPY requirements-dev.txt .
+# hadolint ignore=DL3042
 RUN --mount=type=secret,id=pipconf,target=/etc/pip.conf \
     --mount=type=cache,target=/root/.cache/pip,id=pip-${TARGETARCH} \
     pip install -r requirements-dev.txt

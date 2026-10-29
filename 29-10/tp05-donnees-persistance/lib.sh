@@ -10,6 +10,7 @@ DB_NAME=${DB_NAME:-shop}
 BACKUP_DIR=${BACKUP_DIR:-./backups}
 
 # meme requete que seed.sh, les arguments sont passes a docker compose (ex: -f compose.yml)
+# shellcheck disable=SC2120
 checksum() {
   docker compose "$@" exec -T "$DB_SERVICE" psql -U "$DB_USER" -d "$DB_NAME" -tA -c \
     "SELECT count(*) || ' ' || md5(string_agg(id::text || status, ',' ORDER BY id)) FROM orders;"

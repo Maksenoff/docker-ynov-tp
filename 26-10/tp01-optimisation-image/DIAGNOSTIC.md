@@ -194,12 +194,10 @@ Dockerfile.legacy:5 DL3008 warning: Pin versions in apt get install. Instead of 
 Dockerfile.legacy:5 DL3015 info: Avoid additional packages by specifying `--no-install-recommends`
 Dockerfile.legacy:5 DL3059 info: Multiple consecutive `RUN` instructions. Consider consolidation.
 Dockerfile.legacy:6 DL4006 warning: Set the SHELL option -o pipefail before RUN with a pipe in it. If you are using /bin/sh in an alpine image or if your shell is symlinked to busybox then consider explicitly setting your SHELL to /bin/ash, or disable this check
-Dockerfile.legacy:6 DL3059 info: Multiple consecutive `RUN` instructions. Consider consolidation.
 Dockerfile.legacy:7 DL3008 warning: Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`
 Dockerfile.legacy:7 DL3015 info: Avoid additional packages by specifying `--no-install-recommends`
-Dockerfile.legacy:7 DL3059 info: Multiple consecutive `RUN` instructions. Consider consolidation.
-Dockerfile.legacy:8 DL3016 warning: Pin versions in npm. Instead of `npm install <package>` use `npm install <package>@<version>`
 Dockerfile.legacy:8 DL3059 info: Multiple consecutive `RUN` instructions. Consider consolidation.
+Dockerfile.legacy:8 DL3016 warning: Pin versions in npm. Instead of `npm install <package>` use `npm install <package>@<version>`
 Dockerfile.legacy:15 DL3025 warning: Use arguments JSON notation for CMD and ENTRYPOINT arguments
 ```
 

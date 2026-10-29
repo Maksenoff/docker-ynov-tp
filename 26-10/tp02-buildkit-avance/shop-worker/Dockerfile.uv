@@ -15,16 +15,16 @@ ENV UV_LINK_MODE=copy \
     PATH="/opt/venv/bin:$PATH"
 RUN uv venv /opt/venv
 COPY requirements.txt .
-# uv ne lit pas pip.conf, il lit UV_INDEX_URL : le secret est expose en variable d'env juste pour ce RUN
-RUN --mount=type=secret,id=uv_index,env=UV_INDEX_URL \
+# uv ne lit pas pip.conf, il lit UV_INDEX_URL : on la remplit depuis le secret juste pour ce RUN
+RUN --mount=type=secret,id=uv_index,target=/run/secrets/uv_index \
     --mount=type=cache,target=/root/.cache/uv,id=uv-${TARGETARCH} \
-    uv pip install -r requirements.txt
+    UV_INDEX_URL="$(cat /run/secrets/uv_index)" uv pip install -r requirements.txt
 
 FROM builder AS test
 COPY requirements-dev.txt .
-RUN --mount=type=secret,id=uv_index,env=UV_INDEX_URL \
+RUN --mount=type=secret,id=uv_index,target=/run/secrets/uv_index \
     --mount=type=cache,target=/root/.cache/uv,id=uv-${TARGETARCH} \
-    uv pip install -r requirements-dev.txt
+    UV_INDEX_URL="$(cat /run/secrets/uv_index)" uv pip install -r requirements-dev.txt
 COPY worker ./worker
 COPY tests ./tests
 RUN ruff check worker tests && pytest -q

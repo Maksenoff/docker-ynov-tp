@@ -31,7 +31,8 @@ fi
 
 echo "-- retention ($KEEP derniers)"
 for pattern in "$DB_NAME-*.dump" "pgdata-*.tar.gz"; do
-  # shellcheck disable=SC2012
+  # glob voulu ici
+  # shellcheck disable=SC2012,SC2086
   ls -1t "$BACKUP_DIR"/$pattern 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r f; do
     echo "suppression $f"
     rm -f "$f"
