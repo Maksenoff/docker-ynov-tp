@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+# Bonus B3 : meme chose avec uv au lieu de pip
+
+FROM ghcr.io/astral-sh/uv:0.4.18 AS uv
+
+FROM python:3.12.6-slim-bookworm AS base
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+
+FROM base AS builder
+ARG TARGETARCH
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_LINK_MODE=copy \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+RUN uv venv /opt/venv
+COPY requirements.txt .
+# uv ne lit pas pip.conf, il lit UV_INDEX_URL : le secret est expose en variable d'env juste pour ce RUN
+RUN --mount=type=secret,id=uv_index,env=UV_INDEX_URL \
+    --mount=type=cache,target=/root/.cache/uv,id=uv-${TARGETARCH} \
+    uv pip install -r requirements.txt
+
+FROM builder AS test
+COPY requirements-dev.txt .
+RUN --mount=type=secret,id=uv_index,env=UV_INDEX_URL \
+    --mount=type=cache,target=/root/.cache/uv,id=uv-${TARGETARCH} \
+    uv pip install -r requirements-dev.txt
+COPY worker ./worker
+COPY tests ./tests
+RUN ruff check worker tests && pytest -q
+
+FROM base AS runtime
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin worker
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY worker ./worker
+USER 10001
+EXPOSE 9100
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/metrics', timeout=2)"]
+CMD ["python", "-m", "worker.main"]

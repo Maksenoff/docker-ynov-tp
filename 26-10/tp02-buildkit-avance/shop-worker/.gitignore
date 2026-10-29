@@ -1,0 +1,6 @@
+pip.conf
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+worker.tar
+uv_index.txt
