@@ -1,0 +1,66 @@
+groups:
+  - name: shop
+    rules:
+      - alert: ApiDown
+        expr: sum(up{job="api"}) == 0 or absent(up{job="api"})
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "API injoignable"
+          description: "Aucun replica de l'api ne repond au scrape depuis 30s."
+
+      - alert: WorkerDown
+        expr: sum(up{job="worker"}) == 0 or absent(up{job="worker"})
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker injoignable"
+
+      - alert: ApiHigh5xxRate
+        expr: |
+          sum(rate(http_request_duration_seconds_count{status=~"5.."}[5m]))
+            / sum(rate(http_request_duration_seconds_count[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plus de 5% de 5xx sur l'api"
+          description: "Taux de 5xx : {{ $value | humanizePercentage }}"
+
+      - alert: ApiHighLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 de l'api > 500 ms"
+          description: "p95 : {{ $value | humanizeDuration }}"
+
+      - alert: ContainerRestarting
+        expr: changes(container_start_time_seconds{name=~".+"}[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Le conteneur {{ $labels.name }} a redemarre"
+
+      - alert: ContainerOOMKilled
+        expr: increase(container_oom_events_total{name=~".+"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "OOM kill dans {{ $labels.name }}"
+
+      # pas de limite = container_spec_memory_limit_bytes a 0, on filtre
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          container_memory_working_set_bytes{name=~".+"}
+            / (container_spec_memory_limit_bytes{name=~".+"} > 0) > 0.9
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} utilise plus de 90% de sa limite memoire"
+          description: "{{ $value | humanizePercentage }} de la limite"
