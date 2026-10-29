@@ -1,0 +1,25 @@
+version: 0.1
+log:
+  level: info
+  fields:
+    service: mirror
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :5000
+  debug:
+    addr: :5050
+proxy:
+  remoteurl: https://registry-1.docker.io
+  # optionnel : un compte hub pour avoir des rate limits plus hautes
+  # username: xxx
+  # password: xxx
+  ttl: 168h
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3

@@ -1,0 +1,6 @@
+registry/certs/
+registry/auth/
+cosign.key
+cosign.pub
+sbom*.json
+*.tar

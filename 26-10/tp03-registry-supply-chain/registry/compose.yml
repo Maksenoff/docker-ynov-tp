@@ -1,0 +1,57 @@
+name: registry
+
+services:
+  registry:
+    image: registry:2.8.3
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+      - ./config.yml:/etc/docker/registry/config.yml:ro
+      - ./certs:/certs:ro
+      - ./auth:/auth:ro
+    healthcheck:
+      # endpoint de sante sur le port de debug (pas de TLS ni d'auth dessus)
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5050/debug/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # cache pull-through de docker hub
+  mirror:
+    image: registry:2.8.3
+    restart: unless-stopped
+    ports:
+      - "5001:5000"
+    volumes:
+      - mirror-data:/var/lib/registry
+      - ./mirror-config.yml:/etc/docker/registry/config.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5050/debug/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  ui:
+    image: joxit/docker-registry-ui:2.5.7
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    environment:
+      REGISTRY_TITLE: Shop SAS registry
+      # l'ui fait proxy vers le registre, pas besoin de CORS
+      NGINX_PROXY_PASS_URL: https://registry:5000
+      SINGLE_REGISTRY: "true"
+      DELETE_IMAGES: "true"
+      SHOW_CONTENT_DIGEST: "true"
+      SHOW_CATALOG_NB_TAGS: "true"
+    depends_on:
+      registry:
+        condition: service_healthy
+
+volumes:
+  registry-data:
+  mirror-data:
