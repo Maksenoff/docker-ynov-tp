@@ -1,0 +1,128 @@
+# surcharge de durcissement pour la stack du TP04
+# cd ../../29-10/tp04-compose-entreprise
+# docker compose -f compose.yml -f ../../30-10/tp08-hardening/compose.hardened.yml up -d --wait
+#
+# rappel des menaces :
+#   read_only            -> un attaquant ne peut pas deposer de binaire / modifier le code dans le conteneur
+#   cap_drop ALL         -> root dans le conteneur perd ses pouvoirs noyau (raw socket, chown, mount, ptrace...)
+#   no-new-privileges    -> pas d'elevation via un binaire setuid/setcap (sudo, su, passwd)
+#   pids_limit           -> fork bomb contenue au conteneur
+#   limites cpu/memoire  -> un service qui fuit ou attaque ne fait pas tomber tout l'hote
+#   user non root        -> une evasion du conteneur arrive avec un uid sans droits sur l'hote
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  # seul conteneur qui voit la socket docker, en lecture seule et filtree :
+  # traefik ne peut plus que lister les conteneurs et ecouter les events (pas de POST = pas de docker run)
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.2.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      EVENTS: 1
+      VERSION: 1
+      PING: 1
+      NETWORKS: 0
+      SERVICES: 0
+      TASKS: 0
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket
+    # pas de read_only : l'entrypoint genere la conf haproxy au demarrage
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2375/_ping | grep -q OK"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # plus de socket montee : traefik passe par le proxy (menace : traefik compromis = root sur l'hote)
+  traefik:
+    <<: *hardening
+    # uid nobody : le port 80 reste possible car docker met net.ipv4.ip_unprivileged_port_start=0
+    user: "65534:65534"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    volumes: !reset []
+    environment:
+      TRAEFIK_PROVIDERS_DOCKER_ENDPOINT: tcp://socket-proxy:2375
+    networks:
+      - front
+      - socket
+    depends_on:
+      socket-proxy:
+        condition: service_healthy
+    pids_limit: 100
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+
+  api:
+    <<: *hardening
+    tmpfs:
+      - /tmp:size=16m
+    pids_limit: 100
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+  worker:
+    <<: *hardening
+    tmpfs:
+      - /tmp:size=16m
+    pids_limit: 50
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  # lance directement en uid postgres (70 sur alpine) : l'entrypoint ne fait plus de chown/su-exec
+  # donc aucune capability a rajouter (en root il faudrait CHOWN DAC_OVERRIDE FOWNER SETGID SETUID)
+  db:
+    <<: *hardening
+    user: "70:70"
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
+    pids_limit: 200
+    shm_size: 128m
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  # uid redis (999) de l'image alpine, meme logique que postgres
+  redis:
+    <<: *hardening
+    user: "999:1000"
+    pids_limit: 50
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+networks:
+  socket:
+    internal: true
