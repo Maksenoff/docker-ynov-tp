@@ -1,0 +1,32 @@
+# surcharge dev, chargee automatiquement par docker compose up
+services:
+  traefik:
+    ports:
+      - "8080:8080"
+    environment:
+      TRAEFIK_API_DASHBOARD: "true"
+      TRAEFIK_API_INSECURE: "true"
+      TRAEFIK_LOG_LEVEL: DEBUG
+
+  api:
+    command: ["node", "--watch", "src/server.js"]
+    environment:
+      LOG_LEVEL: debug
+    volumes:
+      - ./apps/shopapi/src:/app/src:ro
+    ports:
+      - "3000:3000"
+
+  worker:
+    environment:
+      LOG_LEVEL: DEBUG
+
+  # back est internal donc un port publie dessus ne marche pas : on ajoute un reseau normal juste en dev
+  db:
+    ports:
+      - "5432:5432"
+    networks:
+      - dev
+
+networks:
+  dev:

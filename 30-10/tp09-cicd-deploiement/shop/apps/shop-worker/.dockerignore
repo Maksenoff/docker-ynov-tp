@@ -1,0 +1,13 @@
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.venv
+pip.conf
+uv_index.txt
+pip.conf.example
+Dockerfile*
+.dockerignore
+*.md

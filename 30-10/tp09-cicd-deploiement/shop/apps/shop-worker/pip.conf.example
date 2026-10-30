@@ -1,0 +1,5 @@
+# copier en pip.conf (gitignored) avant de builder
+# en vrai : https://svc-ci:<token>@pypi.internal.example.com/simple
+# pour la formation on pointe sur pypi public
+[global]
+index-url = https://pypi.org/simple

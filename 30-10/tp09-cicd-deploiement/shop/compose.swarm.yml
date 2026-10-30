@@ -1,0 +1,136 @@
+# Bonus B1 : meme stack en swarm, le rolling update est gere par le moteur
+# docker swarm init
+# docker secret create db_password secrets/db_password.txt
+# REGISTRY=... VERSION=... docker stack deploy -c compose.swarm.yml shop
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-db-url-entrypoint: &db-url-entrypoint
+  - /bin/sh
+  - -c
+  - export DATABASE_URL="postgres://shop:$$(cat /run/secrets/db_password)@db:5432/shop"; exec "$$@"
+  - --
+
+services:
+  traefik:
+    image: traefik:v3.1.4
+    ports:
+      - "80:80"
+    environment:
+      TRAEFIK_ENTRYPOINTS_WEB_ADDRESS: ":80"
+      TRAEFIK_PROVIDERS_SWARM: "true"
+      TRAEFIK_PROVIDERS_SWARM_EXPOSEDBYDEFAULT: "false"
+      TRAEFIK_PROVIDERS_SWARM_NETWORK: shop_front
+      TRAEFIK_PING: "true"
+      TRAEFIK_ACCESSLOG: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [front]
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    logging: *logging
+
+  api:
+    image: ${REGISTRY:?}/shopapi:${VERSION:?}
+    entrypoint: *db-url-entrypoint
+    command: ["node", "src/server.js"]
+    environment:
+      REDIS_URL: redis://redis:6379
+    secrets: [db_password]
+    networks: [front, back]
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 2
+      # le nouveau demarre et doit etre healthy AVANT qu'on arrete l'ancien
+      update_config:
+        parallelism: 1
+        order: start-first
+        delay: 5s
+        monitor: 30s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        order: start-first
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+      # en swarm les labels traefik vont sous deploy
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.api.rule: Host(`api.localhost`)
+        traefik.http.routers.api.entrypoints: web
+        traefik.http.services.api.loadbalancer.server.port: "3000"
+    logging: *logging
+
+  worker:
+    image: ${REGISTRY:?}/shop-worker:${VERSION:?}
+    entrypoint: *db-url-entrypoint
+    command: ["python", "-m", "worker.main"]
+    environment:
+      REDIS_URL: redis://redis:6379
+    secrets: [db_password]
+    networks: [back]
+    deploy:
+      update_config:
+        order: start-first
+        failure_action: rollback
+    logging: *logging
+
+  db:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    configs:
+      - source: init_sql
+        target: /docker-entrypoint-initdb.d/01-init.sql
+    networks: [back]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 10s
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    logging: *logging
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    networks: [back]
+    logging: *logging
+
+networks:
+  front:
+    driver: overlay
+  back:
+    driver: overlay
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+
+configs:
+  init_sql:
+    file: ./db/init.sql
+
+secrets:
+  db_password:
+    external: true

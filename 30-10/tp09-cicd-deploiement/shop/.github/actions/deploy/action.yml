@@ -1,0 +1,64 @@
+name: deploy
+description: verifie les signatures puis deploie en rolling update via docker context ssh
+
+inputs:
+  version:
+    description: "sha-<sha complet> ou tag git v1.2.3"
+    required: true
+  ssh-host:
+    description: "user@hote"
+    required: true
+  ssh-key:
+    required: true
+  known-hosts:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: version
+      shell: bash
+      run: |
+        v="${{ inputs.version }}"
+        case "$v" in
+          sha-*) v="sha-${v:4:7}" ;;   # meme format court que metadata-action
+          v*)    v="${v#v}" ;;          # v1.4.2 -> 1.4.2
+        esac
+        echo "VERSION=$v" >> "$GITHUB_ENV"
+        echo "REGISTRY=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+    # on refuse de deployer une image qui n'a pas ete signee par CE workflow
+    - name: verification des signatures
+      shell: bash
+      run: |
+        for img in shopapi shop-worker; do
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$REGISTRY/$img:$VERSION" > /dev/null
+          echo "signature ok : $img:$VERSION"
+        done
+
+    - name: contexte docker ssh
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        echo "${{ inputs.ssh-key }}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+        echo "${{ inputs.known-hosts }}" > ~/.ssh/known_hosts
+        docker context create cible --docker "host=ssh://${{ inputs.ssh-host }}"
+        docker --context cible version --format '{{.Server.Version}}'
+
+    # avec un contexte distant, les chemins des bind mounts / secrets sont resolus cote client
+    # mais montes cote serveur : on lance compose depuis /opt/shop, le meme chemin que sur le serveur
+    # (ou secrets/db_password.txt existe deja, hors git)
+    - name: rolling update
+      shell: bash
+      env:
+        DOCKER_CONTEXT: cible
+      run: |
+        sudo mkdir -p /opt/shop && sudo chown "$USER" /opt/shop
+        cp -r . /opt/shop/
+        cd /opt/shop
+        # fichier vide cote runner juste pour que compose valide le projet, le vrai est sur le serveur
+        mkdir -p secrets && touch secrets/db_password.txt
+        ./deploy/rolling-update.sh
