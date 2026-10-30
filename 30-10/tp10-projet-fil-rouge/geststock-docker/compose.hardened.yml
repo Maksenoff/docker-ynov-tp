@@ -1,0 +1,44 @@
+# durcissement (cf TP08), compatible dev et prod
+# read_only : pas de code depose dans le conteneur / cap_drop : root sans pouvoirs / nnp : pas de setuid
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  # www-data, apache sur 8080 : aucune capability
+  # tmpfs : pid/lock apache et fichiers uploades en cours de reception (20M max)
+  app:
+    <<: *hardening
+    tmpfs:
+      - /tmp:size=64m
+      - /var/run/apache2
+      - /var/lock/apache2
+    pids_limit: 200
+
+  rapport:
+    <<: *hardening
+    tmpfs:
+      - /tmp:size=16m
+    pids_limit: 50
+
+  traefik:
+    <<: *hardening
+    pids_limit: 100
+
+  # root necessaire pour lire la socket, pas de read_only (conf haproxy generee au demarrage)
+  socket-proxy:
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+
+  # uid mysql (999) de l'image : l'entrypoint ne fait plus de chown/gosu, donc aucune capability
+  db:
+    <<: *hardening
+    user: "999:999"
+    tmpfs:
+      - /run/mysqld
+      - /tmp
+    pids_limit: 200

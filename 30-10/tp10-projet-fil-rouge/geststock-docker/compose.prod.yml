@@ -1,0 +1,45 @@
+# docker compose -f compose.yml -f compose.prod.yml [-f compose.hardened.yml] up -d --wait
+services:
+  app:
+    build: !reset null
+    image: ${REGISTRY:?REGISTRY doit etre defini}/geststock:${VERSION:?VERSION doit etre defini}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  rapport:
+    build: !reset null
+    image: ${REGISTRY:?REGISTRY doit etre defini}/geststock:${VERSION:?VERSION doit etre defini}
+    environment:
+      SMTP_HOST: ${SMTP_HOST:?SMTP_HOST doit etre defini}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  traefik:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+
+  socket-proxy:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+
+  db:
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M

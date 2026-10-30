@@ -1,0 +1,15 @@
+.git
+.github
+.gitignore
+.dockerignore
+.env
+.env.*
+secrets
+backups
+legacy-sample
+scripts
+deploy
+compose*.yml
+Makefile
+*.md
+Dockerfile

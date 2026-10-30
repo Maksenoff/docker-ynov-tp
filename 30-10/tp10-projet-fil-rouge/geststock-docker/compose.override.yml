@@ -1,0 +1,52 @@
+# surcharge dev, chargee automatiquement
+services:
+  traefik:
+    ports:
+      - "8080:8080"
+    environment:
+      TRAEFIK_API_DASHBOARD: "true"
+      TRAEFIK_API_INSECURE: "true"
+
+  # code monte en direct + erreurs php affichees
+  app:
+    volumes:
+      - ./geststock:/var/www/geststock:ro
+      - ./docker/php/dev.ini:/usr/local/etc/php/conf.d/zz-dev.ini:ro
+
+  rapport:
+    volumes:
+      - ./geststock:/var/www/geststock:ro
+
+  # faux serveur smtp : http://mail.localhost
+  mailpit:
+    image: axllent/mailpit:v1.20.5
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # base sqlite des mails dans /tmp
+    tmpfs:
+      - /tmp
+    networks:
+      - front
+      - mail
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.mailpit.rule: Host(`mail.localhost`)
+      traefik.http.routers.mailpit.entrypoints: web
+      traefik.http.services.mailpit.loadbalancer.server.port: "8025"
+
+  db:
+    ports:
+      - "3306:3306"
+    networks:
+      - dev
+
+networks:
+  dev:

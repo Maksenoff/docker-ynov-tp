@@ -1,0 +1,141 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # build de l'etape test (php -l) + stack complete demarree + smoke test
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: php -l (stage test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=cacheonly
+
+      - name: stack + smoke test
+        env:
+          COMPOSE_ARGS: -f compose.yml -f compose.override.yml -f compose.hardened.yml
+        run: |
+          make secrets/db_password.txt secrets/db_root_password.txt
+          docker compose $COMPOSE_ARGS up -d --build --wait
+          ./scripts/simulate-legacy.sh 50
+          ./scripts/migrate-legacy.sh legacy-sample/dump.sql legacy-sample/uploads
+          ./scripts/smoke-test.sh
+          ./scripts/audit.sh $(docker compose ps --format '{{.Name}}' | grep -v socket-proxy)
+
+      - name: logs si echec
+        if: failure()
+        run: docker compose logs
+
+      - if: always()
+        run: docker compose down -v
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/geststock" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+
+      # gate du TP03 sur l'image locale avant tout push
+      - name: build local + release gate
+        run: |
+          docker buildx build --load --target runtime \
+            --build-arg VERSION=${{ steps.meta.outputs.version }} --build-arg GIT_SHA=${{ github.sha }} \
+            --cache-from type=gha -t geststock:gate .
+          ./scripts/release-gate.sh geststock:gate
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - uses: sigstore/cosign-installer@v3.6.0
+      - run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: release
+    runs-on: ubuntu-24.04
+    # preprod sur main, prod (avec approbation) sur tag
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'preprod' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@v3.6.0
+      - name: verification de la signature
+        run: |
+          REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$REGISTRY/geststock:${{ needs.release.outputs.version }}" > /dev/null
+      - name: rolling update via ssh
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh && echo "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          echo "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          docker context create cible --docker "host=ssh://$DEPLOY_HOST"
+          # meme chemin que sur le serveur (bind mounts et secrets resolus cote serveur, cf TP09)
+          sudo mkdir -p /opt/geststock && sudo chown "$USER" /opt/geststock && cp -r . /opt/geststock/
+          cd /opt/geststock && mkdir -p secrets && touch secrets/db_password.txt secrets/db_root_password.txt
+          export DOCKER_CONTEXT=cible REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" VERSION=${{ needs.release.outputs.version }}
+          export SMTP_HOST=${{ vars.SMTP_HOST }}
+          ./deploy/rolling-update.sh

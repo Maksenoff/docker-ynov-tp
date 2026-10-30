@@ -1,0 +1,177 @@
+name: geststock
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 15s
+
+# config commune a l'appli web et au conteneur du rapport (meme image)
+x-app-env: &app-env
+  DB_HOST: db
+  DB_NAME: geststock
+  DB_USER: geststock
+  DB_PASS_FILE: /run/secrets/db_password
+  UPLOAD_DIR: /var/www/uploads
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_TLS: ${SMTP_TLS:-off}
+  MAIL_FROM: ${MAIL_FROM:-geststock@shop.example}
+  REPORT_TO: ${REPORT_TO:-direction@shop.example}
+  TZ: Europe/Paris
+
+services:
+  # seul acces a la socket docker, filtre en lecture (cf TP08)
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.2.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      EVENTS: 1
+      VERSION: 1
+      PING: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2375/_ping | grep -q OK"]
+    logging: *logging
+
+  traefik:
+    image: traefik:v3.1.4
+    restart: unless-stopped
+    user: "65534:65534"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    ports:
+      - "80:80"
+    environment:
+      TRAEFIK_ENTRYPOINTS_WEB_ADDRESS: ":80"
+      TRAEFIK_PROVIDERS_DOCKER: "true"
+      TRAEFIK_PROVIDERS_DOCKER_ENDPOINT: tcp://socket-proxy:2375
+      TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT: "false"
+      TRAEFIK_PROVIDERS_DOCKER_NETWORK: geststock_front
+      TRAEFIK_PING: "true"
+      TRAEFIK_ACCESSLOG: "true"
+      TRAEFIK_LOG_LEVEL: INFO
+    networks:
+      - front
+      - socket
+    depends_on:
+      socket-proxy:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+    logging: *logging
+
+  app:
+    build:
+      context: .
+      target: runtime
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-local}
+    image: ${REGISTRY:-localhost:5000}/geststock:${VERSION:-dev}
+    restart: unless-stopped
+    environment: *app-env
+    secrets:
+      - db_password
+    volumes:
+      - uploads:/var/www/uploads
+    networks:
+      - front
+      - back
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 15s
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.geststock.rule: Host(`geststock.localhost`)
+      traefik.http.routers.geststock.entrypoints: web
+      traefik.http.routers.geststock.middlewares: geststock-retry
+      traefik.http.middlewares.geststock-retry.retry.attempts: "3"
+      traefik.http.services.geststock.loadbalancer.server.port: "8080"
+      traefik.http.services.geststock.loadbalancer.healthcheck.path: /?health
+      traefik.http.services.geststock.loadbalancer.healthcheck.interval: 2s
+    logging: *logging
+
+  # cron du rapport quotidien : meme image, supercronic a la place d'apache
+  # test a la demande : docker compose run --rm rapport php bin/rapport.php
+  rapport:
+    build:
+      context: .
+      target: runtime
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-local}
+    image: ${REGISTRY:-localhost:5000}/geststock:${VERSION:-dev}
+    restart: unless-stopped
+    command: ["supercronic", "-passthrough-logs", "-prometheus-listen-address", "127.0.0.1:9746", "/etc/geststock/crontab"]
+    environment: *app-env
+    secrets:
+      - db_password
+    networks:
+      - back
+      - mail
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_started
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:9746/metrics') === false ? 1 : 0);"]
+    logging: *logging
+
+  db:
+    image: mariadb:11.4.3
+    restart: unless-stopped
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MARIADB_DATABASE: geststock
+      MARIADB_USER: geststock
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MARIADB_AUTO_UPGRADE: "1"
+    secrets:
+      - db_password
+      - db_root_password
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./geststock/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - back
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+    logging: *logging
+
+networks:
+  front:
+  back:
+    internal: true
+  socket:
+    internal: true
+  # sortie vers le relais smtp, seulement pour le rapport
+  mail:
+
+volumes:
+  dbdata:
+  uploads:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  db_root_password:
+    file: ./secrets/db_root_password.txt

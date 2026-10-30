@@ -1,0 +1,2 @@
+# rapport quotidien, comme /etc/cron.d/geststock sur le serveur legacy
+0 6 * * * php /var/www/geststock/bin/rapport.php
